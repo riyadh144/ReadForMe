@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::fs::File;
 use std::io::BufReader;
 use rodio::{Decoder, OutputStream, source::Source};
+use shellexpand;
 
 #[derive(Serialize, Deserialize)]
 struct MyConfigs {
@@ -35,13 +36,14 @@ fn glob_vec(pattern: &str) -> Vec<PathBuf> {
 }
 fn main() -> Result<(), confy::ConfyError> {
     let cfg: MyConfigs = confy::load("read_for_me", None)?;
-    let m4a_files_pattern = cfg.folder.clone() + "/**/*.m4a";
-    let mp3_files_pattern = cfg.folder.clone() + "/**/*.mp3";
+    let expanded_folder=shellexpand::tilde(&cfg.folder);
+    let m4a_files_pattern = expanded_folder.clone() + "/**/*.m4a";
+    let mp3_files_pattern = expanded_folder.clone() + "/**/*.mp3";
     println!("path is {:?}", m4a_files_pattern);
     println!("path is {:?}", mp3_files_pattern);
 
-    let mut m4a_files = glob_vec(m4a_files_pattern.as_str());
-    let mp3_files = glob_vec(mp3_files_pattern.as_str());
+    let mut m4a_files = glob_vec(&m4a_files_pattern.to_string());
+    let mp3_files = glob_vec(&mp3_files_pattern.to_string());
     m4a_files.extend(mp3_files);
     let all_files=m4a_files;
     println!("number of files {:?}", all_files.len());
@@ -81,11 +83,12 @@ fn main() -> Result<(), confy::ConfyError> {
         }
         // let metadata = fs::metadata(m4.as_os_str()).expect("Problem getting meta data");
     }
-    println!("{:?}",books["Atlas Shrugged (Unabridged)"].title);
-    println!("{:?}",books["Atlas Shrugged (Unabridged)"].files);
-    println!("{:?}",books["Atlas Shrugged (Unabridged)"].epub_file);
-    println!("{:?}",books["Atlas Shrugged (Unabridged)"].time_stamp);
-    let atlas_shrugged=books["Atlas Shrugged (Unabridged)"].files[0].clone();
+    println!("{:?}", books.keys());
+    println!("{:?}",books["Dorothy & the Wizard in Oz"].title);
+    println!("{:?}",books["Dorothy & the Wizard in Oz"].files);
+    println!("{:?}",books["Dorothy & the Wizard in Oz"].epub_file);
+    println!("{:?}",books["Dorothy & the Wizard in Oz"].time_stamp);
+    let atlas_shrugged=books["Dorothy & the Wizard in Oz"].files[0].clone();
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let file=BufReader::new(File::open(atlas_shrugged).unwrap());
     let source = Decoder::new(file).unwrap();
