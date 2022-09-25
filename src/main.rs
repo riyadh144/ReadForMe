@@ -1,20 +1,26 @@
-use audiotags::{MimeType, Picture, Tag};
+use audiotags::{Tag};
 use glob::glob;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
+use std::fs::File;
+use std::io::BufReader;
+use rodio::{Decoder, OutputStream, source::Source};
 
 #[derive(Serialize, Deserialize)]
 struct MyConfigs {
     folder: String,
     sync_key: String,
 }
+#[derive(Default, Debug, PartialEq)]
 struct Book {
     title: String,
     files: Vec<String>,
     epub_file: String,
+    time_stamp: u64,
+    current_file:u32
 }
+
 /// `MyConfig` implements `Default`
 impl ::std::default::Default for MyConfigs {
     fn default() -> Self {
@@ -56,6 +62,8 @@ fn main() -> Result<(), confy::ConfyError> {
                         title: audiotags.album_title().unwrap().to_string(),
                         files: files,
                         epub_file: "".to_string(),
+                        time_stamp:0,
+                        current_file:0
                     };
                     books.insert(title, book_);
                 } else {
@@ -69,13 +77,19 @@ fn main() -> Result<(), confy::ConfyError> {
                 }
                 println!("{:?}", audiotags.album_title())
             }
-            Err(_) => println!("Couldnd handle this file problem with metadata {:?}", file),
+            Err(_) => println!("Couldnot handle this file problem with metadata {:?}", file),
         }
         // let metadata = fs::metadata(m4.as_os_str()).expect("Problem getting meta data");
     }
     println!("{:?}",books["Atlas Shrugged (Unabridged)"].title);
     println!("{:?}",books["Atlas Shrugged (Unabridged)"].files);
     println!("{:?}",books["Atlas Shrugged (Unabridged)"].epub_file);
-
+    println!("{:?}",books["Atlas Shrugged (Unabridged)"].time_stamp);
+    let atlas_shrugged=books["Atlas Shrugged (Unabridged)"].files[0].clone();
+    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+    let file=BufReader::new(File::open(atlas_shrugged).unwrap());
+    let source = Decoder::new(file).unwrap();
+    stream_handle.play_raw(source.convert_samples());
+    std::thread::sleep(std::time::Duration::from_secs(40));
     Ok(())
 }
