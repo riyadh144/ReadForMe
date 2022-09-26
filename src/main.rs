@@ -3,11 +3,14 @@ use glob::glob;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::fs::File;
-use std::io::BufReader;
-use rodio::{Decoder, OutputStream, source::Source};
 use shellexpand;
-
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+use symphonia::core::errors::Error;
+use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
+mod output;
+use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
 #[derive(Serialize, Deserialize)]
 struct MyConfigs {
     folder: String,
@@ -89,10 +92,129 @@ fn main() -> Result<(), confy::ConfyError> {
     println!("{:?}",books["Dorothy & the Wizard in Oz"].epub_file);
     println!("{:?}",books["Dorothy & the Wizard in Oz"].time_stamp);
     let atlas_shrugged=books["Dorothy & the Wizard in Oz"].files[0].clone();
-    let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-    let file=BufReader::new(File::open(atlas_shrugged).unwrap());
-    let source = Decoder::new(file).unwrap();
-    stream_handle.play_raw(source.convert_samples());
-    std::thread::sleep(std::time::Duration::from_secs(40));
+    let src = std::fs::File::open(&atlas_shrugged).expect("failed to open media");
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
+    let mut hint = Hint::new();
+    hint.with_extension("mp3");
+    let meta_opts: MetadataOptions = Default::default();
+    let fmt_opts: FormatOptions = FormatOptions{enable_gapless:true,prebuild_seek_index:false,seek_index_fill_rate:20};
+    // Probe the media source.
+    let probed = symphonia::default::get_probe().format(&hint, mss, &fmt_opts, &meta_opts)
+                                                .expect("unsupported format");
+    let mut format = probed.format;
+
+    // Find the first audio track with a known (decodeable) codec.
+    let track = format.tracks()
+                    .iter()
+                    .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+                    .expect("no supported audio tracks");
+
+    // Use the default options for the decoder.
+    let dec_opts: DecoderOptions = Default::default();
+
+    // Create a decoder for the track.
+    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, &dec_opts)
+                                                    .expect("unsupported codec");
+
+    // Store the track identifier, it will be used to filter packets.
+    let track_id = track.id;
+    let mut audio_output=None;
+    let mut first_time=true;
+    // let &mut audio_output_=audio_output;
+    let mut track_info = PlayTrackOptions { seek_ts:0, track_id:0 };
+    // let audio_output=&audio_output_;
+    // The decode loop.
+    loop {
+        // Get the next packet from the media format.
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(Error::ResetRequired) => {
+                // The track list has been changed. Re-examine it and create a new set of decoders,
+                // then restart the decode loop. This is an advanced feature and it is not
+                // unreasonable to consider this "the end." As of v0.5.0, the only usage of this is
+                // for chained OGG physical streams.
+                unimplemented!();
+            }
+            Err(err) => {
+                // A unrecoverable error occured, halt decoding.
+                if err.to_string().contains("end of stream"){
+                    println!("end of stream {}",err);
+                    break;
+                }else{
+                    panic!("{}", err);
+
+                }
+            }
+        };
+
+        // Consume any new metadata that has been read since the last packet.
+        while !format.metadata().is_latest() {
+            // Pop the old head of the metadata queue.
+            format.metadata().pop();
+
+            // Consume the new metadata at the head of the metadata queue.
+        }
+
+        // If the packet does not belong to the selected track, skip over it.
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        // Decode the packet into audio samples.
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                if first_time{
+                    // If the audio output is not open, try to open it.
+                    // Get the audio buffer specification. This is a description of the decoded
+                    // audio buffer's sample format and sample rate.
+                    let spec = *decoded.spec();
+
+                    // Get the capacity of the decoded buffer. Note that this is capacity, not
+                    // length! The capacity of the decoded buffer is constant for the life of the
+                    // decoder, but the length is not.
+                    let duration = decoded.capacity() as u64;
+
+                    // Try to open the audio output.
+                    audio_output=Some(output::try_open(spec, duration).unwrap());
+                    first_time=false;
+                }
+                else{
+                    if packet.ts() >= track_info.seek_ts {
+                        // if let Some(audio_output) = audio_output {
+                        //     audio_output.write(decoded).unwrap()
+                        // }
+                        audio_output.unwrap().write(decoded);
+                    }
+                }
+
+                // Consume the decoded audio samples (see below).
+                // match audio_output{
+                //     Ok(audio_output_)=> audio_output_.wr
+                // }
+
+            }
+            Err(Error::IoError(_)) => {
+                // The packet failed to decode due to an IO error, skip the packet.
+                continue;
+            }
+            Err(Error::DecodeError(_)) => {
+                // The packet failed to decode due to invalid data, skip the packet.
+                continue;
+            }
+            Err(err) => {
+                // An unrecoverable error occured, halt decoding.
+                panic!("{}", err);
+            }
+        }
+    }
+    // if let Some(audio_output) = audio_output.as_mut() {
+    //     audio_output.flush()
+    // }
     Ok(())
 }
+
+struct PlayTrackOptions {
+    track_id: u32,
+    seek_ts: u64,
+}
+

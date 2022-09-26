@@ -14,3 +14,7 @@ audiotags = "0.4.1"
 rodio = "0.16.0"
 alsa = "0.6.0"
 shellexpand = "2.1.2"
+symphonia = { version = "0.5.1", features = ["mp3", "alac", "aac", "isomp4"] }
+libpulse-binding = "2.26.0"
+log = "0.4.17"
+libpulse-simple-binding = "2.25.0"
