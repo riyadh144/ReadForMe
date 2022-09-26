@@ -11,6 +11,7 @@ use symphonia::core::errors::Error;
 use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
 mod output;
 use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
+use log::{error, info, warn};
 #[derive(Serialize, Deserialize)]
 struct MyConfigs {
     folder: String,
@@ -122,91 +123,8 @@ fn main() -> Result<(), confy::ConfyError> {
     let mut first_time=true;
     // let &mut audio_output_=audio_output;
     let mut track_info = PlayTrackOptions { seek_ts:0, track_id:0 };
-    // let audio_output=&audio_output_;
     // The decode loop.
-    loop {
-        // Get the next packet from the media format.
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            Err(Error::ResetRequired) => {
-                // The track list has been changed. Re-examine it and create a new set of decoders,
-                // then restart the decode loop. This is an advanced feature and it is not
-                // unreasonable to consider this "the end." As of v0.5.0, the only usage of this is
-                // for chained OGG physical streams.
-                unimplemented!();
-            }
-            Err(err) => {
-                // A unrecoverable error occured, halt decoding.
-                if err.to_string().contains("end of stream"){
-                    println!("end of stream {}",err);
-                    break;
-                }else{
-                    panic!("{}", err);
-
-                }
-            }
-        };
-
-        // Consume any new metadata that has been read since the last packet.
-        while !format.metadata().is_latest() {
-            // Pop the old head of the metadata queue.
-            format.metadata().pop();
-
-            // Consume the new metadata at the head of the metadata queue.
-        }
-
-        // If the packet does not belong to the selected track, skip over it.
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        // Decode the packet into audio samples.
-        match decoder.decode(&packet) {
-            Ok(decoded) => {
-                if first_time{
-                    // If the audio output is not open, try to open it.
-                    // Get the audio buffer specification. This is a description of the decoded
-                    // audio buffer's sample format and sample rate.
-                    let spec = *decoded.spec();
-
-                    // Get the capacity of the decoded buffer. Note that this is capacity, not
-                    // length! The capacity of the decoded buffer is constant for the life of the
-                    // decoder, but the length is not.
-                    let duration = decoded.capacity() as u64;
-
-                    // Try to open the audio output.
-                    audio_output=Some(output::try_open(spec, duration).unwrap());
-                    first_time=false;
-                }
-                else{
-                    if packet.ts() >= track_info.seek_ts {
-                        // if let Some(audio_output) = audio_output {
-                        //     audio_output.write(decoded).unwrap()
-                        // }
-                        audio_output.unwrap().write(decoded);
-                    }
-                }
-
-                // Consume the decoded audio samples (see below).
-                // match audio_output{
-                //     Ok(audio_output_)=> audio_output_.wr
-                // }
-
-            }
-            Err(Error::IoError(_)) => {
-                // The packet failed to decode due to an IO error, skip the packet.
-                continue;
-            }
-            Err(Error::DecodeError(_)) => {
-                // The packet failed to decode due to invalid data, skip the packet.
-                continue;
-            }
-            Err(err) => {
-                // An unrecoverable error occured, halt decoding.
-                panic!("{}", err);
-            }
-        }
-    }
+    play_track(&mut format, &mut audio_output, track_info, &dec_opts, true);
     // if let Some(audio_output) = audio_output.as_mut() {
     //     audio_output.flush()
     // }
@@ -218,3 +136,79 @@ struct PlayTrackOptions {
     seek_ts: u64,
 }
 
+
+fn play_track(
+    reader: &mut Box<dyn FormatReader>,
+    audio_output: &mut Option<Box<dyn output::AudioOutput>>,
+    play_opts: PlayTrackOptions,
+    decode_opts: &DecoderOptions,
+    no_progress: bool,
+) {
+    // Get the selected track using the track ID.
+    let track = match reader.tracks().iter().find(|track| track.id == play_opts.track_id) {
+        Some(track) => track,
+        _ => panic!("Good"),
+    };
+
+    // Create a decoder for the track.
+    let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts).unwrap();
+
+    // Get the selected track's timebase and duration.
+    let tb = track.codec_params.time_base;
+    let dur = track.codec_params.n_frames.map(|frames| track.codec_params.start_ts + frames);
+
+    // Decode and play the packets belonging to the selected track.
+    loop {
+        // Get the next packet from the format reader.
+        let packet = match reader.next_packet() {
+            Ok(packet) => packet,
+            Err(err) => break,
+        };
+
+        // If the packet does not belong to the selected track, skip it.
+        if packet.track_id() != play_opts.track_id {
+            continue;
+        }
+        // Decode the packet into audio samples.
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                // If the audio output is not open, try to open it.
+                if audio_output.is_none() {
+                    // Get the audio buffer specification. This is a description of the decoded
+                    // audio buffer's sample format and sample rate.
+                    let spec = *decoded.spec();
+
+                    // Get the capacity of the decoded buffer. Note that this is capacity, not
+                    // length! The capacity of the decoded buffer is constant for the life of the
+                    // decoder, but the length is not.
+                    let duration = decoded.capacity() as u64;
+
+                    // Try to open the audio output.
+                    audio_output.replace(output::try_open(spec, duration).unwrap());
+                }
+                else {
+                    // TODO: Check the audio spec. and duration hasn't changed.
+                }
+
+                // Write the decoded audio samples to the audio output if the presentation timestamp
+                // for the packet is >= the seeked position (0 if not seeking).
+                if packet.ts() >= play_opts.seek_ts {
+
+                    if let Some(audio_output) = audio_output {
+                        audio_output.write(decoded).unwrap()
+                    }
+                }
+            }
+            Err(Error::DecodeError(err)) => {
+                // Decode errors are not fatal. Print the error message and try to decode the next
+                // packet as usual.
+                warn!("decode error: {}", err);
+            }
+            Err(err) => break,
+        }
+    };
+
+    // Regardless of result, finalize the decoder to get the verification result.
+    let finalize_result = decoder.finalize();
+
+    }
