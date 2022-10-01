@@ -3,15 +3,19 @@ use glob::glob;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::thread;
+use std::sync::mpsc::{self, Receiver};
 use shellexpand;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::errors::Error;
 use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
+use symphonia::core::units::{Time,TimeStamp};
 mod output;
 use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
 use log::{error, info, warn};
+
 #[derive(Serialize, Deserialize)]
 struct MyConfigs {
     folder: String,
@@ -119,15 +123,32 @@ fn main() -> Result<(), confy::ConfyError> {
 
     // Store the track identifier, it will be used to filter packets.
     let track_id = track.id;
-    let mut audio_output=None;
+    // let mut audio_output=None;
     let mut first_time=true;
     // let &mut audio_output_=audio_output;
     let mut track_info = PlayTrackOptions { seek_ts:0, track_id:0 };
+
+    let (tx, rx) = mpsc::channel();
+    
     // The decode loop.
-    play_track(&mut format, &mut audio_output, track_info, &dec_opts, true);
+    // let play__= play_track(&mut format, track_info, &dec_opts, true);
+    // play__();
+    thread::spawn(move || {play_track(&mut format, track_info, &dec_opts, true,&rx);});
+    // play_track(&mut format, track_info, &dec_opts, true);
     // if let Some(audio_output) = audio_output.as_mut() {
     //     audio_output.flush()
     // }
+    loop{
+        let mut line = String::new();
+        println!("Enter command");
+        let b1 = std::io::stdin().read_line(&mut line).unwrap();
+        // println!("command entered{:?}",line);
+        if line.contains("q"){
+            break;
+        }else{
+            tx.send(line).expect("something happened");
+        }
+    }
     Ok(())
 }
 
@@ -139,26 +160,30 @@ struct PlayTrackOptions {
 
 fn play_track(
     reader: &mut Box<dyn FormatReader>,
-    audio_output: &mut Option<Box<dyn output::AudioOutput>>,
     play_opts: PlayTrackOptions,
     decode_opts: &DecoderOptions,
     no_progress: bool,
+    rx: &Receiver<String>,
 ) {
+    println!("Fuck yeah");
+    let mut audio_output_=None;
+    let mut audio_output=&mut audio_output_;
     // Get the selected track using the track ID.
     let track = match reader.tracks().iter().find(|track| track.id == play_opts.track_id) {
         Some(track) => track,
         _ => panic!("Good"),
     };
-
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs().make(&track.codec_params, decode_opts).unwrap();
 
     // Get the selected track's timebase and duration.
-    let tb = track.codec_params.time_base;
-    let dur = track.codec_params.n_frames.map(|frames| track.codec_params.start_ts + frames);
-
+    let tb = track.codec_params.time_base.unwrap();
+    let dur = track.codec_params.n_frames.map(|frames| track.codec_params.start_ts + frames).unwrap();
+    let dur_secs=tb.calc_time(dur).seconds;
+    println!("duration {:?}",dur_secs);
     // Decode and play the packets belonging to the selected track.
     loop {
+
         // Get the next packet from the format reader.
         let packet = match reader.next_packet() {
             Ok(packet) => packet,
@@ -189,7 +214,34 @@ fn play_track(
                 else {
                     // TODO: Check the audio spec. and duration hasn't changed.
                 }
+                let received = rx.try_recv();
+                match received {
+                    Ok(command) => {
+                        // println!("command received {:?}",command);
+                        if command.contains("s"){
+                            let seek_mode=SeekMode::Accurate;
+                            let current_time=tb.calc_time(packet.ts()).seconds;
+                            let seeked_time=current_time+60;
+                            let packet_time_stamp=tb.calc_timestamp(Time{seconds:seeked_time,frac:0.0});
+                            if packet_time_stamp<dur{
+                                // packet.trim_end10
+                                let seek_to=SeekTo::Time { time: Time{seconds:seeked_time,frac:0.0},track_id:Some(packet.track_id())};
+                                let seeked_to=reader.seek(seek_mode,seek_to).expect("couldn't seek");
+                                println!("Current Time is {:?} current track {:?}",tb.calc_time(seeked_to.actual_ts),seeked_to.track_id)
+                            }else{
+                                 // packet.trim_end10
+                                 let time_into_new_track=packet_time_stamp-dur;
+                                 let seek_to=SeekTo::TimeStamp{ts:time_into_new_track,track_id:packet.track_id()+1};
+                                 let seeked_to=reader.seek(seek_mode,seek_to).expect("couldn't seek");
+                                 println!("Current Time is {:?} current track {:?}",tb.calc_time(seeked_to.actual_ts),seeked_to.track_id)                               
+                            }
 
+
+                        }
+                    },
+                    Err(_) =>{},
+                    
+                }
                 // Write the decoded audio samples to the audio output if the presentation timestamp
                 // for the packet is >= the seeked position (0 if not seeking).
                 if packet.ts() >= play_opts.seek_ts {
