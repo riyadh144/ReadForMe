@@ -3,6 +3,8 @@ use glob::glob;
 use serde_derive::{Deserialize, Serialize};
 use shellexpand;
 use std::collections::HashMap;
+use std::collections::hash_map::Keys;
+use std::iter::Enumerate;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -14,9 +16,9 @@ use symphonia::core::probe::Hint;
 use symphonia::core::units::{Time, TimeStamp};
 mod output;
 use log::{error, info, warn};
-use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
-use std::time::Duration;
 use std::thread::sleep;
+use std::time::Duration;
+use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
 #[derive(Serialize, Deserialize)]
 struct MyConfigs {
     folder: String,
@@ -97,8 +99,107 @@ fn main() -> Result<(), confy::ConfyError> {
     println!("{:?}", books["Dorothy & the Wizard in Oz"].files);
     println!("{:?}", books["Dorothy & the Wizard in Oz"].epub_file);
     println!("{:?}", books["Dorothy & the Wizard in Oz"].time_stamp);
-    let atlas_shrugged = books["Dorothy & the Wizard in Oz"].files[0].clone();
-    let src = std::fs::File::open(&atlas_shrugged).expect("failed to open media");
+
+    let (mut tx, mut rx) = mpsc::channel();
+
+    let mut is_book_playing = false;
+
+    loop {
+        if is_book_playing {
+            let mut line = String::new();
+            println!("Enter command");
+            let b1 = std::io::stdin().read_line(&mut line).unwrap();
+            // println!("command entered{:?}",line);
+            match line.as_str() {
+                "q\n" => {
+                    break;
+                }
+                "seek10\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek30\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek60\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek5mins\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-10\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-30\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-60\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-5mins\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "play\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "pause\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                &_ => {
+                    println!("Not Recognized")
+                }
+            };
+            // if line.contains("q"){
+            //     break;
+            // }else{
+            // }
+        }else{
+            let books_index=number_elements_keys(books.keys());
+            println!("Books available are  {:?} \n Please select the number",books_index );
+            let mut line = String::new();
+            let b1 = std::io::stdin().read_line(&mut line).unwrap();
+            let files_index=number_elements_vec(books[books_index[&(line.replace("\n", ""))]].files.clone());
+
+            println!("Files available are  {:?} \n Please select the number",files_index);
+            let b1 = std::io::stdin().read_line(&mut line).unwrap();
+            println!("file selected {:?}",files_index.keys());
+            let file = files_index[&line.replace("\n", "")].clone();
+
+            (tx, rx) = mpsc::channel();
+            thread::spawn(move || play_file(file, rx));
+            is_book_playing=true;
+
+        }
+    }
+
+    Ok(())
+}
+fn number_elements_keys<T>(list:Keys<String,T>)->HashMap<String,&String>{
+    let mut output_:HashMap<String,&String>=HashMap::new();
+    let mut index=0;
+    for item in list{
+        // output_=format!("{output_} \n {index}:{item}").to_string();
+        output_.insert(index.to_string(), item);
+        index=index+1;
+    }
+    output_
+}
+fn number_elements_vec(list:Vec<String>)->HashMap<String,String>{
+    let mut output_:HashMap<String,String>=HashMap::new();
+    let mut index=0;
+    for item in list{
+        // output_=format!("{output_} \n {index}:{item}").to_string();
+        output_.insert(index.to_string(), item);
+        index=index+1;
+    }
+    output_
+}
+struct PlayTrackOptions {
+    track_id: u32,
+    seek_ts: u64,
+}
+
+fn play_file(file: String, rx: Receiver<String>) {
+    let src = std::fs::File::open(&file).expect("failed to open media");
     let mss = MediaSourceStream::new(Box::new(src), Default::default());
     let mut hint = Hint::new();
     hint.with_extension("mp3");
@@ -139,72 +240,7 @@ fn main() -> Result<(), confy::ConfyError> {
         track_id: 0,
     };
 
-    let (tx, rx) = mpsc::channel();
-
-    // The decode loop.
-    // let play__= play_track(&mut format, track_info, &dec_opts, true);
-    // play__();
-    thread::spawn(move || {
-        play_track(&mut format, track_info, &dec_opts, true, &rx);
-    });
-    // play_track(&mut format, track_info, &dec_opts, true);
-    // if let Some(audio_output) = audio_output.as_mut() {
-    //     audio_output.flush()
-    // }
-    loop {
-        let mut line = String::new();
-        println!("Enter command");
-        let b1 = std::io::stdin().read_line(&mut line).unwrap();
-        // println!("command entered{:?}",line);
-        match line.as_str() {
-            "q\n" => {
-                break;
-            }
-            "seek10\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "seek30\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "seek60\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "seek5mins\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "seek-10\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "seek-30\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "seek-60\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "seek-5mins\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "play\n" => {
-                tx.send(line).expect("something happened");
-            }
-            "pause\n" => {
-                tx.send(line).expect("something happened");
-            }
-            &_ => {
-                println!("Not Recognized")
-            }
-        };
-        // if line.contains("q"){
-        //     break;
-        // }else{
-        // }
-    }
-    Ok(())
-}
-
-struct PlayTrackOptions {
-    track_id: u32,
-    seek_ts: u64,
+    play_track(&mut format, track_info, &dec_opts, true, &rx);
 }
 
 fn play_track(
@@ -354,7 +390,9 @@ fn play_track(
                                             println!("Command {:?} undefiend", command)
                                         }
                                     },
-                                    Err(_) => {sleep(Duration::from_millis(10));}
+                                    Err(_) => {
+                                        sleep(Duration::from_millis(10));
+                                    }
                                 }
                             },
                             &_ => {
