@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Keys;
 use std::iter::Enumerate;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender, channel};
 use std::thread;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::errors::Error;
@@ -19,6 +19,7 @@ use log::{error, info, warn};
 use std::thread::sleep;
 use std::time::Duration;
 use symphonia::core::formats::{Cue, FormatOptions, FormatReader, SeekMode, SeekTo, Track};
+
 #[derive(Serialize, Deserialize)]
 struct MyConfigs {
     folder: String,
@@ -46,7 +47,72 @@ fn glob_vec(pattern: &str) -> Vec<PathBuf> {
     glob(pattern).unwrap().map(|r| r.unwrap()).collect()
 }
 fn main() -> Result<(), confy::ConfyError> {
-    let cfg: MyConfigs = confy::load("read_for_me", None)?;
+   
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "My egui App",
+        options,
+        Box::new(|_cc| Box::new(MyApp::default())),
+    );
+
+    Ok(())
+}
+
+use eframe::egui;
+
+struct MyApp {
+    books:HashMap<String, Book>,
+    selected_book:String,
+
+    is_book_playing:bool,
+    tx:Option<Sender<String>>,
+
+}
+impl Default for MyApp {
+    fn default() -> Self {
+        Self {
+            books:get_books(),
+            selected_book:String::default(),
+            is_book_playing:false,
+            tx:None,
+
+        }
+    }
+}
+
+impl eframe::App for MyApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            for book in &self.books{
+                if ui.button(book.0).clicked(){
+                    self.selected_book=book.0.clone();
+                }
+            }
+            ui.heading("README");
+            if ui.button("Play").clicked(){
+                let txrx=mpsc::channel();
+                (self.tx)=(Some(txrx.0));
+                let rx=Some(txrx.1);
+                let files=&self.books[&self.selected_book].files;
+                let file=files[0].clone();
+                thread::spawn(move || play_file(file,rx.expect("Bad RX")));
+                self.is_book_playing=true;
+            }
+            // ui.horizontal(|ui| {
+            //     ui.label("Your name: ");
+            //     ui.text_edit_singleline(&mut self.name);
+            // });
+            // ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
+            // if ui.button("Click each year").clicked() {
+            //     self.age += 1;
+            // }
+            // ui.label(format!("Hello '{}', age {}", self.name, self.age));
+        });
+    }
+}
+
+fn get_books()->HashMap<String, Book>{
+    let cfg: MyConfigs = confy::load("read_for_me", None).expect("Failed to read");
     let expanded_folder = shellexpand::tilde(&cfg.folder);
     let m4a_files_pattern = expanded_folder.clone() + "/**/*.m4a";
     let mp3_files_pattern = expanded_folder.clone() + "/**/*.mp3";
@@ -94,84 +160,7 @@ fn main() -> Result<(), confy::ConfyError> {
         }
         // let metadata = fs::metadata(m4.as_os_str()).expect("Problem getting meta data");
     }
-    println!("{:?}", books.keys());
-    println!("{:?}", books["Dorothy & the Wizard in Oz"].title);
-    println!("{:?}", books["Dorothy & the Wizard in Oz"].files);
-    println!("{:?}", books["Dorothy & the Wizard in Oz"].epub_file);
-    println!("{:?}", books["Dorothy & the Wizard in Oz"].time_stamp);
-
-    let (mut tx, mut rx) = mpsc::channel();
-
-    let mut is_book_playing = false;
-
-    loop {
-        if is_book_playing {
-            let mut line = String::new();
-            println!("Enter command");
-            let b1 = std::io::stdin().read_line(&mut line).unwrap();
-            // println!("command entered{:?}",line);
-            match line.as_str() {
-                "q\n" => {
-                    break;
-                }
-                "seek10\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "seek30\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "seek60\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "seek5mins\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "seek-10\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "seek-30\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "seek-60\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "seek-5mins\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "play\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                "pause\n" => {
-                    tx.send(line).expect("something happened");
-                }
-                &_ => {
-                    println!("Not Recognized")
-                }
-            };
-            // if line.contains("q"){
-            //     break;
-            // }else{
-            // }
-        }else{
-            let books_index=number_elements_keys(books.keys());
-            println!("Books available are  {:?} \n Please select the number",books_index );
-            let mut line = String::new();
-            let b1 = std::io::stdin().read_line(&mut line).unwrap();
-            let files_index=number_elements_vec(books[books_index[&(line.replace("\n", ""))]].files.clone());
-
-            println!("Files available are  {:?} \n Please select the number",files_index);
-            let b1 = std::io::stdin().read_line(&mut line).unwrap();
-            println!("file selected {:?}",files_index.keys());
-            let file = files_index[&line.replace("\n", "")].clone();
-
-            (tx, rx) = mpsc::channel();
-            thread::spawn(move || play_file(file, rx));
-            is_book_playing=true;
-
-        }
-    }
-
-    Ok(())
+    return books
 }
 fn number_elements_keys<T>(list:Keys<String,T>)->HashMap<String,&String>{
     let mut output_:HashMap<String,&String>=HashMap::new();

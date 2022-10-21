@@ -1,0 +1,125 @@
+
+    loop {
+        if is_book_playing {
+            let mut line = String::new();
+            println!("Enter command");
+            let b1 = std::io::stdin().read_line(&mut line).unwrap();
+            // println!("command entered{:?}",line);
+            match line.as_str() {
+                "q\n" => {
+                    break;
+                }
+                "seek10\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek30\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek60\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek5mins\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-10\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-30\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-60\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "seek-5mins\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "play\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                "pause\n" => {
+                    tx.send(line).expect("something happened");
+                }
+                &_ => {
+                    println!("Not Recognized")
+                }
+            };
+            // if line.contains("q"){
+            //     break;
+            // }else{
+            // }
+        }else{
+            let books_index=number_elements_keys(books.keys());
+            println!("Books available are  {:?} \n Please select the number",books_index );
+            let mut line = String::new();
+            let b1 = std::io::stdin().read_line(&mut line).unwrap();
+            let files_index=number_elements_vec(books[books_index[&(line.replace("\n", ""))]].files.clone());
+
+            println!("Files available are  {:?} \n Please select the number",files_index);
+            let mut line = String::new();
+            let b1 = std::io::stdin().read_line(&mut line).unwrap();
+            println!("file selected {:?}",&line.replace("\n", ""));
+            let file = files_index[&line.replace("\n", "")].clone();
+
+            (tx, rx) = mpsc::channel();
+            thread::spawn(move || play_file(file, rx));
+            is_book_playing=true;
+
+        }
+    }
+    let cfg: MyConfigs = confy::load("read_for_me", None)?;
+    let expanded_folder = shellexpand::tilde(&cfg.folder);
+    let m4a_files_pattern = expanded_folder.clone() + "/**/*.m4a";
+    let mp3_files_pattern = expanded_folder.clone() + "/**/*.mp3";
+    println!("path is {:?}", m4a_files_pattern);
+    println!("path is {:?}", mp3_files_pattern);
+
+    let mut m4a_files = glob_vec(&m4a_files_pattern.to_string());
+    let mp3_files = glob_vec(&mp3_files_pattern.to_string());
+    m4a_files.extend(mp3_files);
+    let all_files = m4a_files;
+    println!("number of files {:?}", all_files.len());
+
+    let mut books: HashMap<String, Book> = HashMap::new();
+
+    for file in all_files {
+        println!("m4a {:?}", file.as_os_str());
+        let tag = Tag::new().read_from_path(file.as_os_str());
+        match tag {
+            Ok(audiotags) => {
+                let title = audiotags.album_title().unwrap().to_string();
+                if books.contains_key(&title) == false {
+                    let mut files: Vec<String> = Vec::new();
+
+                    files.push(file.to_str().unwrap().to_string());
+                    let book_ = Book {
+                        title: audiotags.album_title().unwrap().to_string(),
+                        files: files,
+                        epub_file: "".to_string(),
+                        time_stamp: 0,
+                        current_file: 0,
+                    };
+                    books.insert(title, book_);
+                } else {
+                    let book = books.get_mut(&title);
+                    match book {
+                        Some(book_) => {
+                            book_.files.push(file.to_str().unwrap().to_string());
+                        }
+                        None => println!("Error Not found"),
+                    }
+                }
+                println!("{:?}", audiotags.album_title())
+            }
+            Err(_) => println!("Couldnot handle this file problem with metadata {:?}", file),
+        }
+        // let metadata = fs::metadata(m4.as_os_str()).expect("Problem getting meta data");
+    }
+    println!("{:?}", books.keys());
+    println!("{:?}", books["Dorothy & the Wizard in Oz"].title);
+    println!("{:?}", books["Dorothy & the Wizard in Oz"].files);
+    println!("{:?}", books["Dorothy & the Wizard in Oz"].epub_file);
+    println!("{:?}", books["Dorothy & the Wizard in Oz"].time_stamp);
+
+    let (mut tx, mut rx) = mpsc::channel();
+
+    let mut is_book_playing = false;
